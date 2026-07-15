@@ -135,6 +135,15 @@ function placeToken(cell, type) {
   cell.stack.push(type);
 }
 
+// マス単位の配置可否：動物駒が乗っているマスには積めない（スライド7「駒の上に重ねない」）
+function canPlaceOn(cell, type) {
+  return !cell.cube && canPlace(type, cell.stack);
+}
+// 未完成の動物カード枚数（4枚枠の判定用。完成カードは横へ移動して枠を空ける）
+function incompleteCount(pl) {
+  return pl.owned.filter(c => (c.placed || 0) < c.slots.length).length;
+}
+
 // =========================================================================
 // 隣接・軸座標ユーティリティ
 // =========================================================================
@@ -208,13 +217,14 @@ function riverScore(cells) {
   const riverCells = cells.filter(c => topType(c) === 'river');
   if (!riverCells.length) return 0;
   const rset = new Set(riverCells.map(c => c.key));
-  const table = [0, 0, 2, 5, 8, 11, 15]; // index = 経路長
-  let best = 1;
-  // 各始点から最長単純経路をDFS（盤面が小さいので許容）
+  const table = [0, 0, 2, 5, 8, 11, 15]; // 長さ1..6 の得点
+  let best = 1, steps = 0;
+  // 各始点から最長単純経路をDFS（盤面が小さいので許容。全面川など病的ケース用の安全弁つき）
   const dfs = (cell, visited) => {
     let longest = visited.size;
     for (const n of neighbors(cell)) {
       if (rset.has(n.key) && !visited.has(n.key)) {
+        if (++steps > 300000) return longest;
         visited.add(n.key);
         longest = Math.max(longest, dfs(n, visited));
         visited.delete(n.key);
@@ -222,11 +232,9 @@ function riverScore(cells) {
     }
     return longest;
   };
-  for (const c of riverCells) {
-    best = Math.max(best, dfs(c, new Set([c.key])));
-    if (best >= 6) break;
-  }
-  return table[Math.min(best, 6)];
+  for (const c of riverCells) best = Math.max(best, dfs(c, new Set([c.key])));
+  // 長さ7以上は 15点 + 1個ごとに +4点（スライド17準拠）
+  return best <= 6 ? table[best] : 15 + 4 * (best - 6);
 }
 
 // =========================================================================
@@ -489,7 +497,7 @@ function clickCell(key) {
   // トークン配置モード
   if (G.selectedHand == null) return;
   const type = G.hand[G.selectedHand];
-  if (!canPlace(type, cell.stack)) return;
+  if (!canPlaceOn(cell, type)) return;
   placeToken(cell, type);
   G.handUsed[G.selectedHand] = true;
   G.selectedHand = null;
@@ -505,8 +513,11 @@ function maybeEnableEndTurn() {
 
 function endTurn() {
   if (G.hand.length && !G.handUsed.every(Boolean)) {
-    // 置けない手札が残っている場合は破棄して進める
-    if (!confirm('手札が残っています。残りを破棄してターンを終了しますか？')) return;
+    // 取った3個はすべて置く（スライド7）。置ける手札が残っていれば終了不可。
+    const canStillPlace = G.hand.some((t, i) => !G.handUsed[i] &&
+      Object.values(G.cells).some(c => canPlaceOn(c, t)));
+    if (canStillPlace) { setHint('取ったトークンは3個すべて置く必要があります'); return; }
+    // どうしても置けないトークンだけ破棄して進める
     G.hand = []; G.handUsed = [];
   }
 
@@ -555,7 +566,7 @@ function endTurn() {
 function takeCard(marketIdx) {
   if (!interactive()) return;
   if (G.tookCardThisTurn) { setHint('動物カードの取得は手番に1枚までです'); return; }
-  if (P().owned.length >= 4) { setHint('保持できる動物カードは4枚までです'); return; }
+  if (incompleteCount(P()) >= 4) { setHint('未完成の動物カードは4枚まで（完成させると枠が空きます）'); return; }
   const card = G.market.splice(marketIdx, 1)[0];
   P().owned.push(card);
   G.tookCardThisTurn = true;
@@ -614,7 +625,7 @@ function cpuPlayTurn() {
   for (let i = 0; i < G.central.length; i++) {
     if (!G.central[i].length) continue;
     const n = G.central[i].filter(t =>
-      Object.values(G.cells).some(c => canPlace(t, c.stack))).length;
+      Object.values(G.cells).some(c => canPlaceOn(c, t))).length;
     if (n > best) { best = n; bi = i; }
   }
   if (bi < 0) { renderAll(); return; }     // 取れるスペースが無い
@@ -634,7 +645,7 @@ function cpuPlayTurn() {
 }
 
 function cpuPlaceToken(type) {
-  const cands = Object.values(G.cells).filter(c => canPlace(type, c.stack));
+  const cands = Object.values(G.cells).filter(c => canPlaceOn(c, type));
   if (!cands.length) return false;         // 置けない → 破棄
   const base = computeTerrainScore().total;
   let bestCell = null, bestScore = -Infinity;
@@ -663,7 +674,7 @@ function cpuPlaceCubes() {
 }
 
 function cpuTakeCard() {
-  if (G.tookCardThisTurn || P().owned.length >= 4 || !G.market.length) return;
+  if (G.tookCardThisTurn || incompleteCount(P()) >= 4 || !G.market.length) return;
   // 今すぐ置けるカードを優先。無ければトップ得点が高いカード。
   let pick = -1, bestVal = -1;
   for (let i = 0; i < G.market.length; i++) {
@@ -805,7 +816,7 @@ function renderBoard() {
     G.cubeAnchors.forEach(k => placeableKeys.add(k));
   } else if (canAct && G.selectedHand != null) {
     const type = G.hand[G.selectedHand];
-    for (const c of Object.values(viewCells)) if (canPlace(type, c.stack)) placeableKeys.add(c.key);
+    for (const c of Object.values(viewCells)) if (canPlaceOn(c, type)) placeableKeys.add(c.key);
   }
   const card = placingCube ? P().owned[G.placingCard] : null;
   const hexEls = {};   // key → <g>
@@ -925,7 +936,7 @@ function cardEl(card, opts) {
     const b = document.createElement('button');
     b.className = 'small';
     b.textContent = '取得';
-    b.disabled = !interactive() || G.tookCardThisTurn || P().owned.length >= 4;
+    b.disabled = !interactive() || G.tookCardThisTurn || incompleteCount(P()) >= 4;
     b.addEventListener('click', () => takeCard(opts.idx));
     d.appendChild(b);
   } else {
