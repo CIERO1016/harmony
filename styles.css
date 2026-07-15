@@ -1,0 +1,150 @@
+:root {
+  --bg: #f3efe6;
+  --panel: #ffffff;
+  --ink: #2c2b28;
+  --muted: #7a766c;
+  --line: #e2ddd0;
+  --accent: #3f7d5a;
+  --accent-ink: #fff;
+
+  /* トークン配色（オリジナル：本家イラストは不使用） */
+  --c-river: #4aa3df;
+  --c-mountain: #8d949c;
+  --c-tree: #7a5230;
+  --c-leaf: #3f9d5a;
+  --c-field: #e6c34a;
+  --c-building: #d05b5b;
+  --c-empty: #efe9db;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  font-size: 14px;
+}
+
+#app { max-width: 1180px; margin: 0 auto; padding: 12px 16px 40px; }
+
+header {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; padding: 6px 2px 14px; flex-wrap: wrap;
+}
+header h1 { font-size: 22px; margin: 0; letter-spacing: .5px; }
+header .sub { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 6px; }
+.header-actions { display: flex; gap: 8px; }
+
+main {
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) 380px;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 940px) { main { grid-template-columns: 1fr; } }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+.panel-title { font-weight: 700; font-size: 13px; margin-bottom: 10px; color: var(--ink); }
+.panel-subtitle { font-weight: 600; font-size: 12px; margin: 12px 0 8px; color: var(--muted); }
+
+.board-panel { padding-bottom: 8px; }
+#board-wrap { width: 100%; overflow: auto; display: flex; justify-content: center; }
+#board { width: 100%; max-width: 440px; height: auto; display: block; }
+.hint { min-height: 20px; font-size: 13px; color: var(--accent); font-weight: 600; padding: 8px 2px 2px; }
+
+/* ヘックス */
+.hex { cursor: default; transition: filter .1s; }
+.hex-outline { fill: var(--c-empty); stroke: #d8d1c0; stroke-width: 1.5; }
+.hex.placeable .hex-outline { stroke: var(--accent); stroke-width: 3; fill: #e7f2ea; cursor: pointer; }
+.hex.placeable:hover .hex-outline { filter: brightness(1.03); }
+.stack-token { stroke: rgba(0,0,0,.18); stroke-width: 1; }
+.stack-height { font-size: 11px; font-weight: 700; fill: #fff; text-anchor: middle; paint-order: stroke; stroke: rgba(0,0,0,.35); stroke-width: 2px; }
+.cube { fill: #222; stroke: #fff; stroke-width: 1.5; }
+
+/* 中央ボード */
+.central { display: flex; gap: 10px; flex-wrap: wrap; }
+.space {
+  border: 2px solid var(--line); border-radius: 10px; padding: 8px;
+  display: flex; gap: 6px; cursor: pointer; background: #faf7f0;
+}
+.space:hover { border-color: var(--accent); }
+.space.disabled { opacity: .45; cursor: default; pointer-events: none; }
+.space.empty { opacity: .3; }
+.tok {
+  width: 30px; height: 30px; border-radius: 50%;
+  border: 1px solid rgba(0,0,0,.2);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; color: #fff; font-weight: 700;
+  text-shadow: 0 1px 2px rgba(0,0,0,.4);
+}
+
+/* 手札 */
+.turn-controls { margin-top: 12px; border-top: 1px dashed var(--line); padding-top: 10px; }
+.hand-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.hand { display: flex; gap: 6px; min-height: 34px; margin-bottom: 8px; flex-wrap: wrap; }
+.hand .tok { cursor: pointer; width: 34px; height: 34px; }
+.hand .tok.selected { outline: 3px solid var(--accent); outline-offset: 1px; }
+.hand .tok.used { opacity: .25; pointer-events: none; }
+
+/* 動物カード */
+.animals { display: flex; gap: 8px; flex-wrap: wrap; min-height: 10px; }
+.card {
+  border: 1px solid var(--line); border-radius: 10px; padding: 8px;
+  width: 108px; background: #fffdf7;
+}
+.card.done { opacity: .55; }
+.card h4 { margin: 0 0 4px; font-size: 12px; }
+.card .pat { font-size: 11px; color: var(--muted); line-height: 1.4; min-height: 30px; }
+.card .slots { display: flex; gap: 3px; margin: 6px 0; }
+.card .slot {
+  flex: 1; text-align: center; font-size: 11px; font-weight: 700;
+  border-radius: 4px; padding: 2px 0; background: #eee; color: #999;
+}
+.card .slot.open { background: var(--accent); color: #fff; }
+.card button { width: 100%; font-size: 11px; padding: 4px; margin-top: 2px; }
+
+/* 精霊カード */
+.spirit-choices { display: flex; gap: 8px; flex-wrap: wrap; }
+.spirit-card {
+  border: 1px solid var(--line); border-radius: 10px; padding: 8px;
+  width: 110px; background: #f7f4ff;
+}
+.spirit-card.chosen { background: #eef7f0; border-color: var(--accent); width: auto; }
+.spirit-card.none { background: #f6f6f6; }
+.spirit-card h4 { margin: 0 0 4px; font-size: 12px; }
+.spirit-card .pat { font-size: 11px; color: var(--muted); line-height: 1.4; min-height: 34px; }
+.spirit-card button { width: 100%; font-size: 11px; padding: 4px; margin-top: 4px; }
+
+/* 得点 */
+.score { font-size: 13px; }
+.score .row { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px dotted var(--line); }
+.score .total { font-weight: 800; font-size: 16px; margin-top: 8px; }
+.score .vp { color: var(--accent); font-weight: 800; }
+
+/* ボタン */
+button {
+  font: inherit; cursor: pointer; border: 1px solid var(--accent);
+  background: var(--accent); color: var(--accent-ink);
+  border-radius: 8px; padding: 7px 12px; font-weight: 600;
+}
+button:disabled { opacity: .4; cursor: default; }
+button.ghost { background: transparent; color: var(--accent); }
+button.small { padding: 4px 8px; font-size: 12px; }
+
+/* モーダル */
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.modal.hidden { display: none; }
+.modal-box { background: #fff; border-radius: 14px; max-width: 560px; width: 90%; max-height: 80vh; overflow: auto; padding: 22px 26px; position: relative; }
+.modal-close { position: absolute; top: 10px; right: 12px; background: transparent; border: none; color: var(--muted); font-size: 22px; padding: 2px 8px; }
+.modal-box h2 { margin-top: 0; }
+.modal-box ul { padding-left: 20px; line-height: 1.7; }
+.legend { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0 14px; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+.legend .sw { width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(0,0,0,.2); }

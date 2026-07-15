@@ -1,0 +1,7 @@
+# 作業ログ（公開しない）
+outputs/
+
+# OS / エディタ
+.DS_Store
+.claude/
+*.log
