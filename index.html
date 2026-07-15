@@ -1,7 +1,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Harmonies 1〜4人（自作版）</title>
-<link rel="stylesheet" href="styles.css?v=10">
+<link rel="stylesheet" href="styles.css?v=11">
 <div id="app">
   <header>
     <h1>Harmonies <span class="sub">1〜4人（自作版）</span></h1>
@@ -15,6 +15,7 @@
     <!-- 左：個人ボード -->
     <section class="panel board-panel">
       <div class="panel-title" id="board-title">個人ボード</div>
+      <div id="board-tabs" class="board-tabs"></div>
       <div id="board-wrap">
         <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
       </div>
@@ -41,7 +42,7 @@
       <section class="panel">
         <div class="panel-title" id="animals-title">動物カード</div>
         <div id="animals-market" class="animals"></div>
-        <div class="panel-subtitle">自分の動物カード（最大4枚）</div>
+        <div class="panel-subtitle" id="owned-label">自分の動物カード（最大4枚）</div>
         <div id="animals-owned" class="animals owned"></div>
       </section>
 
@@ -59,4 +60,4 @@
     </div>
   </div>
 </div>
-<script src="game.js?v=10"></script>
+<script src="game.js?v=11"></script>

@@ -38,7 +38,12 @@ const AX_DIRS = [[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]];
 // 盤への「別名参照」。得点・隣接・回転コードは従来どおり G.cells を使える。
 let G = null;
 
-function P() { return G.players[G.current]; }          // 現在プレイヤー
+function P() { return G.players[G.current]; }          // 手番プレイヤー
+function PV() { return G.players[G.view != null ? G.view : G.current]; } // 表示中プレイヤー
+// 操作可能か：自分の盤を表示中で、手番が人間かつCPU思考中/終了でない
+function interactive() {
+  return !G.over && !G.cpuThinking && G.view === G.current && !P().isCpu;
+}
 function isSolo() { return G.mode === 1; }
 function centralSize() { return isSolo() ? 3 : 5; }    // 中央スペース数
 function marketSize() { return isSolo() ? 3 : 5; }     // 動物カード場の枚数
@@ -81,6 +86,7 @@ function freshState(mode, cpuCount) {
     cpuCount,
     players,
     current: 0,
+    view: 0,                 // 表示中の盤（タブで切替。既定は手番プレイヤー）
     bag: buildBag(),
     central: Array.from({ length: mode === 1 ? 3 : 5 }, () => []),
     market: [],              // 場の動物カード（共有：ソロ3/マルチ5）
@@ -446,7 +452,7 @@ function refillCentral() {
 }
 
 function takeSpace(i) {
-  if (G.cpuThinking) return;                 // CPU手番中は操作不可
+  if (!interactive()) return;                // 自分の手番の盤でのみ操作可
   if (G.hand.length) return;                 // 手札処理中は不可
   if (!G.central[i].length) return;
   G.hand = G.central[i].splice(0, G.central[i].length);
@@ -456,18 +462,27 @@ function takeSpace(i) {
   setHint('手札のトークンを選んで、盤上の配置可能マス（緑枠）に置こう');
 }
 
+// タブで表示する盤を切り替える（閲覧のみ。操作は自分の手番の盤でのみ）
+function selectView(i) {
+  if (G.placingCard != null) return;   // キューブ配置中は切替不可
+  G.view = i;
+  renderAll();
+  if (i !== G.current) setHint(PV().name + ' の盤を見ています（閲覧のみ）');
+  else if (interactive()) setHint('あなたの手番：中央スペースからトークンを取得しよう');
+}
+
 function selectHand(idx) {
-  if (G.cpuThinking) return;
+  if (!interactive()) return;
   if (G.handUsed[idx]) return;
   G.selectedHand = (G.selectedHand === idx) ? null : idx;
   renderAll();
 }
 
 function clickCell(key) {
-  if (G.cpuThinking) return;
+  if (!interactive()) return;
   const cell = G.cells[key];
-  // 動物キューブ配置モード
-  if (G.placingCard) {
+  // 動物キューブ配置モード（placingCard は 0 もあり得るので != null で判定）
+  if (G.placingCard != null) {
     if (G.cubeAnchors && G.cubeAnchors.includes(key)) placeCube(cell);
     return;
   }
@@ -524,6 +539,7 @@ function endTurn() {
   G.hand = []; G.handUsed = []; G.selectedHand = null;
   G.placingCard = null; G.cubeAnchors = null;
   G.current = (G.current + 1) % G.mode;
+  G.view = G.current;               // 表示も手番プレイヤーに合わせる
   syncAliases();
   // ラウンドの先頭(=0)に戻った時点で終了フラグが立っていれば終了
   if (G.current === 0 && G.finishing) {
@@ -537,7 +553,7 @@ function endTurn() {
 
 // 動物カード取得（手番1回・最大4枚）
 function takeCard(marketIdx) {
-  if (G.cpuThinking) return;
+  if (!interactive()) return;
   if (G.tookCardThisTurn) { setHint('動物カードの取得は手番に1枚までです'); return; }
   if (P().owned.length >= 4) { setHint('保持できる動物カードは4枚までです'); return; }
   const card = G.market.splice(marketIdx, 1)[0];
@@ -549,7 +565,7 @@ function takeCard(marketIdx) {
 
 // キューブ配置モードに入る
 function startPlaceCube(ownedIdx) {
-  if (G.cpuThinking) return;
+  if (!interactive()) return;
   const card = P().owned[ownedIdx];
   if (card.placed >= card.slots.length) return;
   const anchors = validAnchors(card);
@@ -708,6 +724,7 @@ function scoreForPlayer(i) {
 // =========================================================================
 function renderAll() {
   renderBoardTitle();
+  renderTabs();
   renderBoard();
   renderCentral();
   renderHand();
@@ -727,9 +744,29 @@ function renderBoardTitle() {
   const el = document.getElementById('board-title');
   if (!el) return;
   if (isSolo()) { el.textContent = '個人ボード'; return; }
-  el.innerHTML = '個人ボード ― <b style="color:var(--accent)">' + P().name + '</b> の手番' +
+  const viewing = G.view === G.current
+    ? '<b style="color:var(--accent)">' + PV().name + '</b> の手番'
+    : '<b>' + PV().name + '</b> の盤（閲覧）／手番：' + P().name;
+  el.innerHTML = '個人ボード ― ' + viewing +
     ' <span style="color:var(--muted);font-weight:400">（' + G.mode + '人／手番' + G.turn +
     (G.finishing ? '・最終ラウンド' : '') + '）</span>';
+}
+
+// プレイヤー切替タブ（マルチのみ）
+function renderTabs() {
+  const el = document.getElementById('board-tabs');
+  if (!el) return;
+  if (isSolo()) { el.innerHTML = ''; el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.innerHTML = G.players.map((p, i) => {
+    const total = scoreForPlayer(i).total;
+    const cls = 'tab' + (i === G.view ? ' viewing' : '') + (i === G.current ? ' turn' : '');
+    const mark = i === G.current ? '▶ ' : '';
+    return '<button class="' + cls + '" data-view="' + i + '">' + mark + p.name +
+      '<span class="tab-score">' + total + '</span></button>';
+  }).join('');
+  el.querySelectorAll('button[data-view]').forEach(b =>
+    b.addEventListener('click', () => selectView(parseInt(b.getAttribute('data-view'), 10))));
 }
 
 function hexPixel(col, row) {
@@ -750,9 +787,11 @@ function hexPoints(cx, cy, r) {
 
 function renderBoard() {
   const svg = document.getElementById('board');
+  const viewCells = PV().cells;        // 表示中プレイヤーの盤
+  const canAct = interactive();        // 操作できるのは自分の手番の盤のみ
   // 実際のセル位置から描画範囲を算出
   let maxX = 0, maxY = 0;
-  for (const cell of Object.values(G.cells)) {
+  for (const cell of Object.values(viewCells)) {
     const [cx, cy] = hexPixel(cell.col, cell.row);
     maxX = Math.max(maxX, cx); maxY = Math.max(maxY, cy);
   }
@@ -761,23 +800,23 @@ function renderBoard() {
   svg.innerHTML = '';
 
   const placeableKeys = new Set();
-  const placingCube = G.placingCard != null && G.cubeAnchors;
+  const placingCube = canAct && G.placingCard != null && G.cubeAnchors;
   if (placingCube) {
     G.cubeAnchors.forEach(k => placeableKeys.add(k));
-  } else if (G.selectedHand != null) {
+  } else if (canAct && G.selectedHand != null) {
     const type = G.hand[G.selectedHand];
-    for (const c of Object.values(G.cells)) if (canPlace(type, c.stack)) placeableKeys.add(c.key);
+    for (const c of Object.values(viewCells)) if (canPlace(type, c.stack)) placeableKeys.add(c.key);
   }
   const card = placingCube ? P().owned[G.placingCard] : null;
   const hexEls = {};   // key → <g>
 
-  for (const cell of Object.values(G.cells)) {
+  for (const cell of Object.values(viewCells)) {
     const [cx, cy] = hexPixel(cell.col, cell.row);
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     const isPlaceable = placeableKeys.has(cell.key);
     g.setAttribute('class', 'hex' + (isPlaceable ? ' placeable' : ''));
     g.setAttribute('data-key', cell.key);
-    g.addEventListener('click', () => clickCell(cell.key));
+    if (canAct) g.addEventListener('click', () => clickCell(cell.key));
     hexEls[cell.key] = g;
 
     // ホバー時：キューブ配置なら動物の形全体をプレビュー表示
@@ -843,9 +882,10 @@ function tokEl(type, extraClass) {
 function renderCentral() {
   const el = document.getElementById('central');
   el.innerHTML = '';
+  const locked = !interactive() || G.hand.length;   // 操作不可 or 手札処理中
   G.central.forEach((space, i) => {
     const d = document.createElement('div');
-    d.className = 'space' + (space.length === 0 ? ' empty' : '') + (G.hand.length ? ' disabled' : '');
+    d.className = 'space' + (space.length === 0 ? ' empty' : '') + (locked ? ' disabled' : '');
     space.forEach(t => d.appendChild(tokEl(t)));
     if (space.length === 0) d.textContent = '空';
     d.addEventListener('click', () => takeSpace(i));
@@ -857,7 +897,8 @@ function renderHand() {
   const label = document.getElementById('hand-label');
   const el = document.getElementById('hand');
   el.innerHTML = '';
-  if (!G.hand.length) { label.textContent = '手札：なし'; return; }
+  // 手札は手番プレイヤーのもの。別の盤を閲覧中は表示しない
+  if (G.view !== G.current || !G.hand.length) { label.textContent = '手札：なし'; return; }
   label.textContent = '手札：クリックして選択 → 盤に配置';
   G.hand.forEach((t, i) => {
     const cls = (G.handUsed[i] ? 'used' : '') + (G.selectedHand === i ? ' selected' : '');
@@ -884,14 +925,14 @@ function cardEl(card, opts) {
     const b = document.createElement('button');
     b.className = 'small';
     b.textContent = '取得';
-    b.disabled = G.tookCardThisTurn || P().owned.length >= 4;
+    b.disabled = !interactive() || G.tookCardThisTurn || P().owned.length >= 4;
     b.addEventListener('click', () => takeCard(opts.idx));
     d.appendChild(b);
   } else {
     const b = document.createElement('button');
     b.className = 'small';
     b.textContent = done ? '完成' : 'キューブを置く';
-    b.disabled = done;
+    b.disabled = done || !interactive();
     b.addEventListener('click', () => startPlaceCube(opts.idx));
     d.appendChild(b);
   }
@@ -938,12 +979,16 @@ function renderAnimals() {
   const o = document.getElementById('animals-owned');
   m.innerHTML = ''; o.innerHTML = '';
   G.market.forEach((c, i) => m.appendChild(cardEl(c, { type: 'market', idx: i })));
-  if (!P().owned.length) o.innerHTML = '<div style="color:var(--muted);font-size:12px">まだありません</div>';
-  P().owned.forEach((c, i) => o.appendChild(cardEl(c, { type: 'owned', idx: i })));
+  // 表示中プレイヤーの動物カード（別の盤を閲覧中はそのプレイヤーのものを閲覧）
+  const owner = PV();
+  const ownedLabel = document.getElementById('owned-label');
+  if (ownedLabel) ownedLabel.textContent = (G.view === G.current ? '自分' : owner.name) + 'の動物カード（最大4枚）';
+  if (!owner.owned.length) o.innerHTML = '<div style="color:var(--muted);font-size:12px">まだありません</div>';
+  owner.owned.forEach((c, i) => o.appendChild(cardEl(c, { type: 'owned', idx: i })));
 }
 
 function renderScore() {
-  const s = computeScore();
+  const s = scoreForPlayer(G.view);        // 表示中プレイヤーの内訳
   const t = s.terrain.parts;
   const rows = [
     ['川', t.river], ['山', t.mountain], ['木(葉)', t.leaf],
@@ -951,7 +996,7 @@ function renderScore() {
   ];
   if (isSolo()) rows.push(['精霊', s.spirit]);
   let html = rows.map(([k, v]) => '<div class="row"><span>' + k + '</span><span>' + v + '</span></div>').join('') +
-    '<div class="row total"><span>' + (isSolo() ? P().name : P().name + ' の得点') + '</span><span>' + s.total + '</span></div>';
+    '<div class="row total"><span>' + (isSolo() ? PV().name : PV().name + ' の得点') + '</span><span>' + s.total + '</span></div>';
   if (isSolo()) {
     html += '<div class="row"><span>ソロ勝利点</span><span class="vp">' + s.vp + '</span></div>' +
       '<div class="row" style="font-size:11px;color:var(--muted)"><span>内訳（得点' + s.scoreVp +
@@ -962,8 +1007,9 @@ function renderScore() {
       .sort((a, b) => b.total - a.total);
     html += '<div class="panel-subtitle" style="margin:10px 0 6px">順位（現在）</div>' +
       standings.map((p, rank) =>
-        '<div class="row' + (p.i === G.current ? '' : '') + '"><span>' + (rank + 1) + '位　' +
-        (p.i === G.current ? '<b style="color:var(--accent)">' + p.name + '</b>' : p.name) +
+        '<div class="row"><span>' + (rank + 1) + '位　' +
+        (p.i === G.current ? '<b style="color:var(--accent)">' + p.name + '</b>'
+          : (p.i === G.view ? '<b>' + p.name + '</b>' : p.name)) +
         '</span><span>' + p.total + '</span></div>').join('');
   }
   html += '<div class="row"><span>手番</span><span>' + G.turn + '</span></div>';
@@ -1098,7 +1144,7 @@ function showCpuPicker(mode) {
 // =========================================================================
 // セーブ / ロード
 // =========================================================================
-const SAVE_KEY = 'harmonies_v5';
+const SAVE_KEY = 'harmonies_v6';
 function save() {
   try {
     const copy = JSON.parse(JSON.stringify(G));
@@ -1114,6 +1160,7 @@ function load() {
     if (!raw) return false;
     G = JSON.parse(raw);
     if (!G.players || !G.players.length) return false;
+    if (G.view == null) G.view = G.current || 0;
     syncAliases();                    // G.cells を現在プレイヤーへ結び直す
     return true;
   } catch (e) { return false; }
