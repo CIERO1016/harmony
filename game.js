@@ -33,9 +33,20 @@ const SQRT3 = Math.sqrt(3);
 const AX_DIRS = [[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]];
 
 // ---- ゲーム状態 ---------------------------------------------------------
+// mode=1 はソロ（精霊＋勝利点あり）。mode=2..4 はマルチ（素点で勝敗）。
+// プレイヤーごとの盤/カードは players[] に保持し、G.cells は現在プレイヤーの
+// 盤への「別名参照」。得点・隣接・回転コードは従来どおり G.cells を使える。
 let G = null;
 
-function freshState() {
+function P() { return G.players[G.current]; }          // 現在プレイヤー
+function isSolo() { return G.mode === 1; }
+function centralSize() { return isSolo() ? 3 : 5; }    // 中央スペース数
+function marketSize() { return isSolo() ? 3 : 5; }     // 動物カード場の枚数
+
+// 現在プレイヤーの盤を G.cells に別名として結び付ける（保存時は削除）
+function syncAliases() { G.cells = P().cells; }
+
+function freshBoard() {
   const cells = {};
   for (let col = 0; col < COLCOUNTS.length; col++) {
     for (let row = 0; row < COLCOUNTS[col]; row++) {
@@ -46,19 +57,33 @@ function freshState() {
       cells[key] = { key, q, r, col, row, stack: [], cube: null };
     }
   }
+  return cells;
+}
+
+function freshState(mode) {
+  const players = [];
+  for (let i = 0; i < mode; i++) {
+    players.push({
+      name: 'プレイヤー' + (i + 1),
+      cells: freshBoard(),
+      owned: [],                       // 自分の動物カード
+      spiritOffer: [],                 // 開始時に提示する精霊id（ソロのみ）
+      spirit: mode === 1 ? null : 'none', // 選んだ精霊id（マルチは精霊なし固定）
+    });
+  }
   return {
-    cells,
+    mode,
+    players,
+    current: 0,
     bag: buildBag(),
-    central: [[], [], []],   // ソロ：3スペース
-    hand: [],                // 取得した3トークン（type文字列）
+    central: Array.from({ length: mode === 1 ? 3 : 5 }, () => []),
+    market: [],              // 場の動物カード（共有：ソロ3/マルチ5）
+    animalDeck: [],          // 山札（共有）
+    hand: [],                // 取得した3トークン（現在手番のみ）
     handUsed: [],            // 配置済みフラグ
     tookCardThisTurn: false,
-    market: [],              // 場の動物カード（3枚）
-    animalDeck: [],          // 山札
-    owned: [],               // 自分の動物カード
-    spiritOffer: [],         // 開始時に提示する精霊カードid（2枚）
-    spirit: null,            // 選んだ精霊id（'none'＝精霊なし、null＝未選択）
-    turn: 1,
+    turn: 1,                 // 手番の通し番号
+    finishing: false,        // 終了トリガー後、ラウンドを終えるためのフラグ
     over: false,
   };
 }
@@ -357,38 +382,46 @@ function countCond(fn) { return Object.values(G.cells).filter(fn).length; }
 
 // 精霊のゲーム中追加点
 function spiritPoints() {
-  if (!G.spirit || G.spirit === 'none') return 0;
-  const s = spiritById(G.spirit);
+  const sp = P().spirit;
+  if (!sp || sp === 'none') return 0;
+  const s = spiritById(sp);
   return s ? s.score() : 0;
 }
 // 精霊タイプによるソロ勝利点
 function spiritTypeVp() {
-  if (!G.spirit || G.spirit === 'none') return 2;   // 精霊なし＝2点
-  const s = spiritById(G.spirit);
+  const sp = P().spirit;
+  if (!sp || sp === 'none') return 2;                // 精霊なし＝2点
+  const s = spiritById(sp);
   return s && s.type === 'group' ? 1 : 0;            // グループ=1 / 個別=0
 }
 
 // =========================================================================
 // ゲーム進行
 // =========================================================================
-function newGame() {
-  G = freshState();
-  // 動物山札を作る
+function newGame(mode) {
+  mode = mode || 1;
+  G = freshState(mode);
+  syncAliases();
+  // 動物山札（共有）
   G.animalDeck = shuffle(animalTemplates().map(t => ({ ...t, placed: 0 })));
-  // 精霊カードを2枚提示
-  G.spiritOffer = shuffle(spiritDefs().map(s => s.id)).slice(0, 2);
+  if (isSolo()) {
+    // ソロのみ：精霊カードを2枚提示
+    P().spiritOffer = shuffle(spiritDefs().map(s => s.id)).slice(0, 2);
+  }
   refillMarket();
   refillCentral();
   save(); renderAll();
-  setHint('まず精霊カードを選ぶか「精霊なし」を選ぼう（右）。次に中央スペースからトークンを取得');
+  setHint(isSolo()
+    ? 'まず精霊カードを選ぶか「精霊なし」を選ぼう（右）。次に中央スペースからトークンを取得'
+    : P().name + 'の手番：中央スペースを1つ選んでトークンを取得しよう');
 }
 
 function refillMarket() {
-  while (G.market.length < 3 && G.animalDeck.length) G.market.push(G.animalDeck.pop());
+  while (G.market.length < marketSize() && G.animalDeck.length) G.market.push(G.animalDeck.pop());
 }
 
 function refillCentral() {
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < G.central.length; i++) {
     while (G.central[i].length < 3 && G.bag.length) G.central[i].push(G.bag.pop());
   }
 }
@@ -439,28 +472,52 @@ function endTurn() {
     if (!confirm('手札が残っています。残りを破棄してターンを終了しますか？')) return;
     G.hand = []; G.handUsed = [];
   }
-  // ソロ：中央の残りトークンを全破棄 → 補充
-  G.central = [[], [], []];
-  refillCentral();
-  G.tookCardThisTurn = false;
-  G.turn++;
 
-  // 終了判定：盤の空きが2以下 / 袋が空で補充不可
+  // 現在プレイヤーの盤で終了トリガーを判定（空き2以下）
   const empties = Object.values(G.cells).filter(c => c.stack.length === 0).length;
-  const noRefill = G.central.every(s => s.length === 0);
-  if (empties <= 2 || noRefill) { G.over = true; }
 
+  if (isSolo()) {
+    // ソロ：中央の残りトークンを全破棄 → 補充
+    G.central = G.central.map(() => []);
+    refillCentral();
+    G.tookCardThisTurn = false;
+    G.turn++;
+    const noRefill = G.central.every(s => s.length === 0);
+    if (empties <= 2 || noRefill) G.over = true;
+    save(); renderAll();
+    if (G.over) showResult();
+    else setHint('新しい手番：中央スペースを選ぼう（ターン ' + G.turn + '）');
+    return;
+  }
+
+  // マルチ：空いたスペースだけ補充（他プレイヤーの分は残る）
+  refillCentral();
+  refillMarket();
+  const noRefill = G.central.every(s => s.length === 0);
+  if (empties <= 2 || noRefill) G.finishing = true;   // 終了トリガー
+
+  // 次プレイヤーへ
+  G.turn++;
+  G.tookCardThisTurn = false;
+  G.hand = []; G.handUsed = []; G.selectedHand = null;
+  G.placingCard = null; G.cubeAnchors = null;
+  G.current = (G.current + 1) % G.mode;
+  syncAliases();
+  // ラウンドの先頭(=0)に戻った時点で終了フラグが立っていれば終了
+  if (G.current === 0 && G.finishing) {
+    G.over = true;
+    save(); renderAll(); showResult(); return;
+  }
   save(); renderAll();
-  if (G.over) showResult();
-  else setHint('新しい手番：中央スペースを選ぼう（ターン ' + G.turn + '）');
+  setHint(P().name + 'の手番：中央スペースを1つ選んでトークンを取得しよう');
 }
 
 // 動物カード取得（手番1回・最大4枚）
 function takeCard(marketIdx) {
   if (G.tookCardThisTurn) { setHint('動物カードの取得は手番に1枚までです'); return; }
-  if (G.owned.length >= 4) { setHint('保持できる動物カードは4枚までです'); return; }
+  if (P().owned.length >= 4) { setHint('保持できる動物カードは4枚までです'); return; }
   const card = G.market.splice(marketIdx, 1)[0];
-  G.owned.push(card);
+  P().owned.push(card);
   G.tookCardThisTurn = true;
   refillMarket();
   save(); renderAll();
@@ -468,7 +525,7 @@ function takeCard(marketIdx) {
 
 // キューブ配置モードに入る
 function startPlaceCube(ownedIdx) {
-  const card = G.owned[ownedIdx];
+  const card = P().owned[ownedIdx];
   if (card.placed >= card.slots.length) return;
   const anchors = validAnchors(card);
   if (!anchors.length) { setHint('「' + card.name + '」の条件を満たすマスがありません'); return; }
@@ -479,7 +536,7 @@ function startPlaceCube(ownedIdx) {
 }
 
 function placeCube(cell) {
-  const card = G.owned[G.placingCard];
+  const card = P().owned[G.placingCard];
   cell.cube = card.id;
   card.placed = (card.placed || 0) + 1;
   G.placingCard = null;
@@ -492,12 +549,13 @@ function cancelPlaceCube() {
   G.placingCard = null; G.cubeAnchors = null; renderAll();
 }
 
-// 精霊カードを選ぶ（idまたは'none'）。最初の手番開始時のみ。
+// 精霊カードを選ぶ（idまたは'none'）。ソロの最初の手番開始時のみ。
 function chooseSpirit(id) {
-  if (G.spirit) return;                 // 既に選択済み
+  if (!isSolo()) return;
+  if (P().spirit) return;               // 既に選択済み
   if (G.turn !== 1 || G.hand.length)    // 1手目を始める前のみ
     { setHint('精霊カードは最初の手番の開始時にのみ選べます'); return; }
-  G.spirit = id;
+  P().spirit = id;
   save(); renderAll();
   const s = id === 'none' ? '精霊なし' : spiritById(id).name;
   setHint('精霊：' + s + ' を選択。中央スペースからトークンを取得しよう');
@@ -509,7 +567,7 @@ function chooseSpirit(id) {
 function computeScore() {
   const terrain = computeTerrainScore();
   let animal = 0;
-  for (const c of G.owned) animal += cardScore(c);
+  for (const c of P().owned) animal += cardScore(c);
   const spirit = spiritPoints();
   const total = terrain.total + animal + spirit;
   // ソロ勝利点：ゲーム得点の正式変換表（40→1 ... 160→8）
@@ -522,19 +580,41 @@ function computeScore() {
   return { terrain, animal, spirit, total, scoreVp, boardVp, spiritVp, vp };
 }
 
+// 指定プレイヤーの得点を計算（現在プレイヤーを一時的に切り替える）
+function scoreForPlayer(i) {
+  const cur = G.current;
+  G.current = i; syncAliases();
+  const s = computeScore();
+  G.current = cur; syncAliases();
+  return s;
+}
+
 // =========================================================================
 // 描画
 // =========================================================================
 function renderAll() {
+  renderBoardTitle();
   renderBoard();
   renderCentral();
   renderHand();
   renderSpirit();
   renderAnimals();
   renderScore();
-  const canEnd = !G.over && !G.hand.length;
-  document.getElementById('btn-endturn').disabled = !canEnd && !G.hand.length ? false : !!G.hand.length;
   document.getElementById('btn-endturn').disabled = G.over;
+}
+
+// 個人ボード／中央ボードの見出しに現在プレイヤーとモードを表示
+function renderBoardTitle() {
+  const ct = document.getElementById('central-title');
+  if (ct) ct.textContent = isSolo() ? '中央ボード（ソロ・3スペース）' : '中央ボード（' + centralSize() + 'スペース）';
+  const at = document.getElementById('animals-title');
+  if (at) at.textContent = '動物カード（場に' + marketSize() + '枚）';
+  const el = document.getElementById('board-title');
+  if (!el) return;
+  if (isSolo()) { el.textContent = '個人ボード'; return; }
+  el.innerHTML = '個人ボード ― <b style="color:var(--accent)">' + P().name + '</b> の手番' +
+    ' <span style="color:var(--muted);font-weight:400">（' + G.mode + '人／手番' + G.turn +
+    (G.finishing ? '・最終ラウンド' : '') + '）</span>';
 }
 
 function hexPixel(col, row) {
@@ -667,7 +747,7 @@ function cardEl(card, opts) {
     const b = document.createElement('button');
     b.className = 'small';
     b.textContent = '取得';
-    b.disabled = G.tookCardThisTurn || G.owned.length >= 4;
+    b.disabled = G.tookCardThisTurn || P().owned.length >= 4;
     b.addEventListener('click', () => takeCard(opts.idx));
     d.appendChild(b);
   } else {
@@ -682,13 +762,18 @@ function cardEl(card, opts) {
 }
 
 function renderSpirit() {
+  const panel = document.getElementById('spirit-panel');
   const el = document.getElementById('spirit');
   if (!el) return;
+  // マルチでは精霊を使わないのでパネルごと非表示
+  if (!isSolo()) { if (panel) panel.style.display = 'none'; return; }
+  if (panel) panel.style.display = '';
+  const sp = P().spirit;
   const typeLabel = t => t === 'group' ? 'グループ効果(勝利点+1)' : '個別効果(勝利点+0)';
-  if (!G.spirit) {
+  if (!sp) {
     // 未選択：2枚＋「なし」を提示
     let html = '<div class="panel-subtitle" style="margin-top:0">開始時に1枚選択（または精霊なし）</div><div class="spirit-choices">';
-    for (const id of G.spiritOffer) {
+    for (const id of P().spiritOffer) {
       const s = spiritById(id);
       html += '<div class="spirit-card"><h4>' + s.name + '</h4>' +
         '<div class="pat">' + s.desc + '<br><small>' + typeLabel(s.type) + '</small></div>' +
@@ -701,10 +786,10 @@ function renderSpirit() {
     el.innerHTML = html;
     el.querySelectorAll('button[data-sp]').forEach(b =>
       b.addEventListener('click', () => chooseSpirit(b.getAttribute('data-sp'))));
-  } else if (G.spirit === 'none') {
+  } else if (sp === 'none') {
     el.innerHTML = '<div class="pat">精霊なし（ソロ勝利点 +2）</div>';
   } else {
-    const s = spiritById(G.spirit);
+    const s = spiritById(sp);
     el.innerHTML = '<div class="spirit-card chosen"><h4>' + s.name + '</h4>' +
       '<div class="pat">' + s.desc + '<br><small>' + typeLabel(s.type) +
       ' ／ 現在 ' + s.score() + ' 点</small></div></div>';
@@ -716,8 +801,8 @@ function renderAnimals() {
   const o = document.getElementById('animals-owned');
   m.innerHTML = ''; o.innerHTML = '';
   G.market.forEach((c, i) => m.appendChild(cardEl(c, { type: 'market', idx: i })));
-  if (!G.owned.length) o.innerHTML = '<div style="color:var(--muted);font-size:12px">まだありません</div>';
-  G.owned.forEach((c, i) => o.appendChild(cardEl(c, { type: 'owned', idx: i })));
+  if (!P().owned.length) o.innerHTML = '<div style="color:var(--muted);font-size:12px">まだありません</div>';
+  P().owned.forEach((c, i) => o.appendChild(cardEl(c, { type: 'owned', idx: i })));
 }
 
 function renderScore() {
@@ -725,15 +810,27 @@ function renderScore() {
   const t = s.terrain.parts;
   const rows = [
     ['川', t.river], ['山', t.mountain], ['木(葉)', t.leaf],
-    ['畑', t.field], ['建物', t.building], ['動物', s.animal], ['精霊', s.spirit],
+    ['畑', t.field], ['建物', t.building], ['動物', s.animal],
   ];
-  document.getElementById('score').innerHTML =
-    rows.map(([k, v]) => '<div class="row"><span>' + k + '</span><span>' + v + '</span></div>').join('') +
-    '<div class="row total"><span>ゲーム得点</span><span>' + s.total + '</span></div>' +
-    '<div class="row"><span>ソロ勝利点</span><span class="vp">' + s.vp + '</span></div>' +
-    '<div class="row" style="font-size:11px;color:var(--muted)"><span>内訳（得点' + s.scoreVp +
-      '＋盤面' + s.boardVp + '＋精霊' + s.spiritVp + '）</span><span></span></div>' +
-    '<div class="row"><span>ターン</span><span>' + G.turn + '</span></div>';
+  if (isSolo()) rows.push(['精霊', s.spirit]);
+  let html = rows.map(([k, v]) => '<div class="row"><span>' + k + '</span><span>' + v + '</span></div>').join('') +
+    '<div class="row total"><span>' + (isSolo() ? P().name : P().name + ' の得点') + '</span><span>' + s.total + '</span></div>';
+  if (isSolo()) {
+    html += '<div class="row"><span>ソロ勝利点</span><span class="vp">' + s.vp + '</span></div>' +
+      '<div class="row" style="font-size:11px;color:var(--muted)"><span>内訳（得点' + s.scoreVp +
+      '＋盤面' + s.boardVp + '＋精霊' + s.spiritVp + '）</span><span></span></div>';
+  } else {
+    // マルチ：全員の得点順位
+    const standings = G.players.map((p, i) => ({ i, name: p.name, total: scoreForPlayer(i).total }))
+      .sort((a, b) => b.total - a.total);
+    html += '<div class="panel-subtitle" style="margin:10px 0 6px">順位（現在）</div>' +
+      standings.map((p, rank) =>
+        '<div class="row' + (p.i === G.current ? '' : '') + '"><span>' + (rank + 1) + '位　' +
+        (p.i === G.current ? '<b style="color:var(--accent)">' + p.name + '</b>' : p.name) +
+        '</span><span>' + p.total + '</span></div>').join('');
+  }
+  html += '<div class="row"><span>手番</span><span>' + G.turn + '</span></div>';
+  document.getElementById('score').innerHTML = html;
 }
 
 function setHint(msg) {
@@ -747,21 +844,49 @@ function setHint(msg) {
 }
 
 function showResult() {
-  const s = computeScore();
-  openModal(
-    '<h2>ゲーム終了！</h2>' +
-    '<p>ゲーム得点 <b style="font-size:22px">' + s.total + '</b> 点</p>' +
-    '<p>ソロ勝利点：<b style="font-size:20px">' + s.vp + '</b>' +
-    '（得点 ' + s.scoreVp + '＋盤面 ' + s.boardVp + '＋精霊 ' + s.spiritVp + '）</p>' +
-    '<ul>' +
-      '<li>川 ' + s.terrain.parts.river + ' / 山 ' + s.terrain.parts.mountain +
-      ' / 木(葉) ' + s.terrain.parts.leaf + '</li>' +
-      '<li>畑 ' + s.terrain.parts.field + ' / 建物 ' + s.terrain.parts.building +
-      ' / 動物 ' + s.animal + ' / 精霊 ' + s.spirit + '</li>' +
-    '</ul>' +
-    '<button id="modal-new">もう一度</button>'
-  );
-  document.getElementById('modal-new').addEventListener('click', () => { closeModal(); newGame(); });
+  let body;
+  if (isSolo()) {
+    const s = computeScore();
+    body =
+      '<p>ゲーム得点 <b style="font-size:22px">' + s.total + '</b> 点</p>' +
+      '<p>ソロ勝利点：<b style="font-size:20px">' + s.vp + '</b>' +
+      '（得点 ' + s.scoreVp + '＋盤面 ' + s.boardVp + '＋精霊 ' + s.spiritVp + '）</p>' +
+      '<ul>' +
+        '<li>川 ' + s.terrain.parts.river + ' / 山 ' + s.terrain.parts.mountain +
+        ' / 木(葉) ' + s.terrain.parts.leaf + '</li>' +
+        '<li>畑 ' + s.terrain.parts.field + ' / 建物 ' + s.terrain.parts.building +
+        ' / 動物 ' + s.animal + ' / 精霊 ' + s.spirit + '</li>' +
+      '</ul>';
+  } else {
+    // マルチ：全員の内訳と順位、勝者
+    const rows = G.players.map((p, i) => {
+      const s = scoreForPlayer(i);
+      return { name: p.name, s };
+    }).sort((a, b) => {
+      if (b.s.total !== a.s.total) return b.s.total - a.s.total;
+      // 同点はキューブ配置数（動物完成度の目安）で決定
+      return cubeCount(b) - cubeCount(a);
+    });
+    const top = rows[0].s.total;
+    const winners = rows.filter(r => r.s.total === top).map(r => r.name).join('・');
+    body = '<p>勝者：<b style="font-size:20px;color:var(--accent)">' + winners + '</b>（' + top + '点）</p>' +
+      '<table style="width:100%;border-collapse:collapse;font-size:13px">' +
+      '<tr style="text-align:left;color:var(--muted)"><th>順位</th><th>プレイヤー</th>' +
+      '<th>川</th><th>山</th><th>木</th><th>畑</th><th>建</th><th>動物</th><th>合計</th></tr>' +
+      rows.map((r, i) => {
+        const p = r.s.terrain.parts;
+        return '<tr><td>' + (i + 1) + '</td><td>' + r.name + '</td><td>' + p.river + '</td><td>' +
+          p.mountain + '</td><td>' + p.leaf + '</td><td>' + p.field + '</td><td>' + p.building +
+          '</td><td>' + r.s.animal + '</td><td><b>' + r.s.total + '</b></td></tr>';
+      }).join('') + '</table>';
+  }
+  openModal('<h2>ゲーム終了！</h2>' + body + '<button id="modal-new">もう一度（同じ人数）</button>');
+  document.getElementById('modal-new').addEventListener('click', () => { closeModal(); newGame(G.mode); });
+}
+// 同点処理用：そのプレイヤーが盤に置いたキューブ数
+function cubeCount(row) {
+  const idx = G.players.findIndex(p => p.name === row.name);
+  return Object.values(G.players[idx].cells).filter(c => c.cube).length;
 }
 
 // =========================================================================
@@ -777,30 +902,47 @@ function showRules() {
   const legend = Object.entries(TOKENS).map(([k, v]) =>
     '<span><span class="sw" style="background:' + v.color + '"></span>' + v.label + '（' + k + '）</span>').join('');
   openModal(
-    '<h2>遊び方（コア版）</h2>' +
+    '<h2>遊び方</h2>' +
     '<div class="legend">' + legend + '</div>' +
     '<ul>' +
-    '<li><b>手番</b>：中央ボードのスペースを1つ選び、トークン3個を取得 → 盤上に配置。</li>' +
+    '<li><b>人数</b>：1人（ソロ＝精霊＋勝利点あり）／2〜4人（同じ画面を回して交代。素点で勝敗）。</li>' +
+    '<li><b>手番</b>：中央ボードのスペースを1つ選び、トークン3個を取得 → 自分の盤に配置。</li>' +
     '<li><b>配置ルール</b>：川/畑=平置き。山=最大3段。木(幹)=最大2段。葉=地面か幹の上。建物=山/建物/木(高さ1)の上（高さ2まで）。</li>' +
-    '<li><b>動物カード</b>：手番に1枚まで取得（最大4枚保持）。条件パターンが盤上にできたら「キューブを置く」。全キューブ配置で完成。</li>' +
-    '<li><b>精霊カード</b>：最初の手番の前に2枚から1枚選ぶ（または「精霊なし」）。追加点が入るが、ソロ勝利点は「なし=+2／グループ効果=+1／個別効果=+0」。</li>' +
-    '<li><b>ターン終了</b>：中央の残りトークンは破棄し、3スペースを補充。</li>' +
+    '<li><b>動物カード</b>：手番に1枚まで取得（最大4枚保持）。条件パターンが盤上にできたら「キューブを置く」。全キューブ配置で完成。場は 1人=3枚／2〜4人=5枚。</li>' +
+    '<li><b>精霊カード（ソロのみ）</b>：最初の手番の前に2枚から1枚選ぶ（または「精霊なし」）。ソロ勝利点は「なし=+2／グループ=+1／個別=+0」。</li>' +
+    '<li><b>ターン終了</b>：中央スペースを補充（ソロは残りを破棄）。マルチは次の人へ。</li>' +
     '<li><b>得点</b>：山/葉は高さ、畑は連結グループ、建物は隣接色数、川は最長経路長。</li>' +
-    '<li><b>ソロ勝利点</b>：ゲーム得点(40→1 …160→8)＋盤面(A面+1)＋精霊タイプ。</li>' +
-    '<li><b>終了</b>：盤の空きが2以下、または袋が尽きて補充できないとき。</li>' +
+    '<li><b>終了</b>：誰かの盤の空きが2以下、または袋が尽きたら、そのラウンドを終えて集計。マルチは最高得点が勝ち（同点はキューブ数）。</li>' +
     '</ul>' +
-    '<p style="color:var(--muted);font-size:12px">※ 本家イラストは使わないオリジナル実装。ソロ勝利点表と動物カードは今後さらに拡充予定です。</p>'
+    '<p style="color:var(--muted);font-size:12px">※ 本家イラストは使わないオリジナル実装。2〜4人は1台を回して遊ぶホットシート方式です。</p>'
   );
+}
+
+// 人数選択モーダル
+function showModePicker() {
+  openModal(
+    '<h2>新規ゲーム：人数を選択</h2>' +
+    '<p style="color:var(--muted)">2〜4人は同じ画面を回して交代で遊ぶ方式です。</p>' +
+    '<div class="mode-picker">' +
+    '<button data-mode="1">1人（ソロ）</button>' +
+    '<button data-mode="2">2人</button>' +
+    '<button data-mode="3">3人</button>' +
+    '<button data-mode="4">4人</button>' +
+    '</div>'
+  );
+  document.querySelectorAll('.mode-picker button').forEach(b =>
+    b.addEventListener('click', () => { closeModal(); newGame(parseInt(b.getAttribute('data-mode'), 10)); }));
 }
 
 // =========================================================================
 // セーブ / ロード
 // =========================================================================
-const SAVE_KEY = 'harmonies_solo_v4';
+const SAVE_KEY = 'harmonies_v5';
 function save() {
   try {
     const copy = JSON.parse(JSON.stringify(G));
-    // 一時的なUI状態は保存しない
+    // 別名参照/一時的なUI状態は保存しない（players[] が正）
+    delete copy.cells;
     delete copy.selectedHand; delete copy.placingCard; delete copy.cubeAnchors;
     localStorage.setItem(SAVE_KEY, JSON.stringify(copy));
   } catch (e) { /* localStorage不可でも続行 */ }
@@ -810,7 +952,8 @@ function load() {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return false;
     G = JSON.parse(raw);
-    // 参照系の再構築は不要（cellsはそのまま）
+    if (!G.players || !G.players.length) return false;
+    syncAliases();                    // G.cells を現在プレイヤーへ結び直す
     return true;
   } catch (e) { return false; }
 }
@@ -818,9 +961,7 @@ function load() {
 // =========================================================================
 // 起動
 // =========================================================================
-document.getElementById('btn-new').addEventListener('click', () => {
-  if (confirm('新規ゲームを開始しますか？（現在の進行は消えます）')) newGame();
-});
+document.getElementById('btn-new').addEventListener('click', showModePicker);
 document.getElementById('btn-rules').addEventListener('click', showRules);
 document.getElementById('btn-endturn').addEventListener('click', endTurn);
 document.getElementById('modal-close').addEventListener('click', closeModal);
@@ -830,7 +971,8 @@ document.getElementById('modal').addEventListener('click', (e) => {
 
 if (load() && G && G.cells) {
   renderAll();
-  setHint(G.over ? 'ゲーム終了。新規ゲームで再開できます' : '再開しました。手番を続けよう');
+  setHint(G.over ? 'ゲーム終了。新規ゲームで再開できます'
+    : (isSolo() ? '再開しました。手番を続けよう' : P().name + 'の手番：続けよう'));
 } else {
-  newGame();
+  showModePicker();
 }

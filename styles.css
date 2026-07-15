@@ -138,6 +138,10 @@ button:disabled { opacity: .4; cursor: default; }
 button.ghost { background: transparent; color: var(--accent); }
 button.small { padding: 4px 8px; font-size: 12px; }
 
+/* 人数選択 */
+.mode-picker { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.mode-picker button { flex: 1; min-width: 90px; padding: 14px 10px; font-size: 15px; }
+
 /* モーダル */
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 50; }
 .modal.hidden { display: none; }

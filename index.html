@@ -1,10 +1,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Harmonies ソロ（自作版）</title>
-<link rel="stylesheet" href="styles.css?v=4">
+<title>Harmonies 1〜4人（自作版）</title>
+<link rel="stylesheet" href="styles.css?v=7">
 <div id="app">
   <header>
-    <h1>Harmonies <span class="sub">ソロ（自作版・コア）</span></h1>
+    <h1>Harmonies <span class="sub">1〜4人（自作版）</span></h1>
     <div class="header-actions">
       <button id="btn-new">新規ゲーム</button>
       <button id="btn-rules" class="ghost">遊び方</button>
@@ -14,7 +14,7 @@
   <main>
     <!-- 左：個人ボード -->
     <section class="panel board-panel">
-      <div class="panel-title">個人ボード</div>
+      <div class="panel-title" id="board-title">個人ボード</div>
       <div id="board-wrap">
         <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
       </div>
@@ -24,7 +24,7 @@
     <!-- 右：操作エリア -->
     <aside class="side">
       <section class="panel">
-        <div class="panel-title">中央ボード（ソロ・3スペース）</div>
+        <div class="panel-title" id="central-title">中央ボード</div>
         <div id="central" class="central"></div>
         <div class="turn-controls">
           <div id="hand-label" class="hand-label">手札：なし</div>
@@ -33,13 +33,13 @@
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="spirit-panel">
         <div class="panel-title">自然の精霊カード</div>
         <div id="spirit"></div>
       </section>
 
       <section class="panel">
-        <div class="panel-title">動物カード（場に3枚）</div>
+        <div class="panel-title" id="animals-title">動物カード</div>
         <div id="animals-market" class="animals"></div>
         <div class="panel-subtitle">自分の動物カード（最大4枚）</div>
         <div id="animals-owned" class="animals owned"></div>
@@ -59,4 +59,4 @@
     </div>
   </div>
 </div>
-<script src="game.js?v=4"></script>
+<script src="game.js?v=7"></script>
