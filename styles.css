@@ -60,10 +60,17 @@ main {
 .hint { min-height: 20px; font-size: 13px; color: var(--accent); font-weight: 600; padding: 8px 2px 2px; }
 
 /* ヘックス */
-.hex { cursor: default; transition: filter .1s; }
-.hex-outline { fill: var(--c-empty); stroke: #d8d1c0; stroke-width: 1.5; }
-.hex.placeable .hex-outline { stroke: var(--accent); stroke-width: 3; fill: #e7f2ea; cursor: pointer; }
-.hex.placeable:hover .hex-outline { filter: brightness(1.03); }
+.hex { cursor: default; }
+.hex-outline { fill: var(--c-empty); stroke: #d8d1c0; stroke-width: 1.5; transition: fill .08s, stroke .08s, stroke-width .08s; }
+/* 配置候補（薄い緑） */
+.hex.placeable .hex-outline { stroke: var(--accent); stroke-width: 2.5; fill: #e7f2ea; cursor: pointer; }
+/* カーソルを乗せたマス（はっきり濃い緑・太枠） */
+.hex.placeable:hover .hex-outline,
+.hex.placeable.hover .hex-outline { fill: #6fbf90; stroke: #1f5e3c; stroke-width: 5; }
+/* 動物カードの形プレビュー：アンカー以外の該当マス（緑） */
+.hex.preview .hex-outline { fill: #c4e6cf; stroke: #2f6b4a; stroke-width: 4; }
+/* プレビューのアンカー（キューブが乗るマス）＝金色で強調。上のhoverより後に置いて優先 */
+.hex.placeable.preview-anchor .hex-outline { fill: #f2d98c; stroke: #b8860b; stroke-width: 5.5; }
 .stack-token { stroke: rgba(0,0,0,.18); stroke-width: 1; }
 .stack-height { font-size: 11px; font-weight: 700; fill: #fff; text-anchor: middle; paint-order: stroke; stroke: rgba(0,0,0,.35); stroke-width: 2px; }
 .cube { fill: #222; stroke: #fff; stroke-width: 1.5; }

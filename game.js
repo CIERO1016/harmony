@@ -330,6 +330,18 @@ function validAnchors(card) {
   return out;
 }
 
+// アンカーに置いた場合に成立する pattern の全セルキー（最初に一致した回転）を返す
+function matchedPatternCells(anchor, card) {
+  for (let rot = 0; rot < 6; rot++) {
+    if (!matchAt(anchor, card.pattern, rot)) continue;
+    return card.pattern.map(p => {
+      const [dq, dr] = rotateOffset(p.dq, p.dr, rot);
+      return (anchor.q + dq) + ',' + (anchor.r + dr);
+    });
+  }
+  return null;
+}
+
 function cardScore(card) {
   const len = card.slots.length;
   const placed = card.placed || 0;
@@ -646,18 +658,40 @@ function renderBoard() {
   svg.innerHTML = '';
 
   const placeableKeys = new Set();
-  if (G.placingCard != null && G.cubeAnchors) {
+  const placingCube = G.placingCard != null && G.cubeAnchors;
+  if (placingCube) {
     G.cubeAnchors.forEach(k => placeableKeys.add(k));
   } else if (G.selectedHand != null) {
     const type = G.hand[G.selectedHand];
     for (const c of Object.values(G.cells)) if (canPlace(type, c.stack)) placeableKeys.add(c.key);
   }
+  const card = placingCube ? P().owned[G.placingCard] : null;
+  const hexEls = {};   // key → <g>
 
   for (const cell of Object.values(G.cells)) {
     const [cx, cy] = hexPixel(cell.col, cell.row);
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    g.setAttribute('class', 'hex' + (placeableKeys.has(cell.key) ? ' placeable' : ''));
+    const isPlaceable = placeableKeys.has(cell.key);
+    g.setAttribute('class', 'hex' + (isPlaceable ? ' placeable' : ''));
+    g.setAttribute('data-key', cell.key);
     g.addEventListener('click', () => clickCell(cell.key));
+    hexEls[cell.key] = g;
+
+    // ホバー時：キューブ配置なら動物の形全体をプレビュー表示
+    if (isPlaceable) {
+      g.addEventListener('mouseenter', () => {
+        g.classList.add('hover');
+        if (placingCube) {
+          const keys = matchedPatternCells(cell, card);
+          if (keys) keys.forEach((k, i) => hexEls[k] &&
+            hexEls[k].classList.add(i === 0 ? 'preview-anchor' : 'preview'));
+        }
+      });
+      g.addEventListener('mouseleave', () => {
+        Object.values(hexEls).forEach(e =>
+          e.classList.remove('hover', 'preview', 'preview-anchor'));
+      });
+    }
 
     const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
     poly.setAttribute('class', 'hex-outline');
