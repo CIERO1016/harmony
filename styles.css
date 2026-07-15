@@ -148,6 +148,8 @@ button.small { padding: 4px 8px; font-size: 12px; }
 /* 人数選択 */
 .mode-picker { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
 .mode-picker button { flex: 1; min-width: 90px; padding: 14px 10px; font-size: 15px; }
+.mode-picker.vert { flex-direction: column; }
+.mode-picker.vert button { width: 100%; }
 
 /* モーダル */
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 50; }

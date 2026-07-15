@@ -60,11 +60,16 @@ function freshBoard() {
   return cells;
 }
 
-function freshState(mode) {
+function freshState(mode, cpuCount) {
+  cpuCount = Math.max(0, Math.min(cpuCount || 0, mode - 1)); // 人間は最低1人
+  const humanCount = mode - cpuCount;
   const players = [];
   for (let i = 0; i < mode; i++) {
+    const isCpu = i >= humanCount;              // 人間を先頭、CPUを後ろに配置
+    const name = isCpu ? ('CPU' + (i - humanCount + 1))
+      : (humanCount === 1 ? 'あなた' : 'プレイヤー' + (i + 1));
     players.push({
-      name: 'プレイヤー' + (i + 1),
+      name, isCpu,
       cells: freshBoard(),
       owned: [],                       // 自分の動物カード
       spiritOffer: [],                 // 開始時に提示する精霊id（ソロのみ）
@@ -73,6 +78,7 @@ function freshState(mode) {
   }
   return {
     mode,
+    cpuCount,
     players,
     current: 0,
     bag: buildBag(),
@@ -410,9 +416,9 @@ function spiritTypeVp() {
 // =========================================================================
 // ゲーム進行
 // =========================================================================
-function newGame(mode) {
+function newGame(mode, cpuCount) {
   mode = mode || 1;
-  G = freshState(mode);
+  G = freshState(mode, cpuCount);
   syncAliases();
   // 動物山札（共有）
   G.animalDeck = shuffle(animalTemplates().map(t => ({ ...t, placed: 0 })));
@@ -426,6 +432,7 @@ function newGame(mode) {
   setHint(isSolo()
     ? 'まず精霊カードを選ぶか「精霊なし」を選ぼう（右）。次に中央スペースからトークンを取得'
     : P().name + 'の手番：中央スペースを1つ選んでトークンを取得しよう');
+  scheduleCpuIfNeeded();
 }
 
 function refillMarket() {
@@ -439,6 +446,7 @@ function refillCentral() {
 }
 
 function takeSpace(i) {
+  if (G.cpuThinking) return;                 // CPU手番中は操作不可
   if (G.hand.length) return;                 // 手札処理中は不可
   if (!G.central[i].length) return;
   G.hand = G.central[i].splice(0, G.central[i].length);
@@ -449,12 +457,14 @@ function takeSpace(i) {
 }
 
 function selectHand(idx) {
+  if (G.cpuThinking) return;
   if (G.handUsed[idx]) return;
   G.selectedHand = (G.selectedHand === idx) ? null : idx;
   renderAll();
 }
 
 function clickCell(key) {
+  if (G.cpuThinking) return;
   const cell = G.cells[key];
   // 動物キューブ配置モード
   if (G.placingCard) {
@@ -522,10 +532,12 @@ function endTurn() {
   }
   save(); renderAll();
   setHint(P().name + 'の手番：中央スペースを1つ選んでトークンを取得しよう');
+  scheduleCpuIfNeeded();
 }
 
 // 動物カード取得（手番1回・最大4枚）
 function takeCard(marketIdx) {
+  if (G.cpuThinking) return;
   if (G.tookCardThisTurn) { setHint('動物カードの取得は手番に1枚までです'); return; }
   if (P().owned.length >= 4) { setHint('保持できる動物カードは4枚までです'); return; }
   const card = G.market.splice(marketIdx, 1)[0];
@@ -537,6 +549,7 @@ function takeCard(marketIdx) {
 
 // キューブ配置モードに入る
 function startPlaceCube(ownedIdx) {
+  if (G.cpuThinking) return;
   const card = P().owned[ownedIdx];
   if (card.placed >= card.slots.length) return;
   const anchors = validAnchors(card);
@@ -558,7 +571,96 @@ function placeCube(cell) {
 }
 
 function cancelPlaceCube() {
+  if (G.cpuThinking) return;
   G.placingCard = null; G.cubeAnchors = null; renderAll();
+}
+
+// =========================================================================
+// CPU（自動プレイ）
+// グリーディ：地形得点が最も伸びる位置にトークンを置き、置けるキューブは全部置く。
+// =========================================================================
+// 現在プレイヤーがCPUなら、少し待ってから自動で手番を実行する
+function scheduleCpuIfNeeded() {
+  if (G.over || !P().isCpu) { G.cpuThinking = false; renderAll(); return; }
+  G.cpuThinking = true;
+  renderAll();
+  setHint(P().name + ' が考え中…');
+  setTimeout(() => {
+    cpuPlayTurn();                         // 手番の行動（盤に反映）
+    setHint(P().name + ' が手番を実行しました');
+    setTimeout(() => { endTurn(); }, 800); // 結果を見せてから次へ
+  }, 700);
+}
+
+function cpuPlayTurn() {
+  // 1. 最も多く配置できそうな中央スペースを選ぶ
+  let bi = -1, best = -1;
+  for (let i = 0; i < G.central.length; i++) {
+    if (!G.central[i].length) continue;
+    const n = G.central[i].filter(t =>
+      Object.values(G.cells).some(c => canPlace(t, c.stack))).length;
+    if (n > best) { best = n; bi = i; }
+  }
+  if (bi < 0) { renderAll(); return; }     // 取れるスペースが無い
+  const tokens = G.central[bi].splice(0, G.central[bi].length);
+
+  // 2. 各トークンを、地形得点が最も伸びるマスへ置く
+  for (const type of tokens) cpuPlaceToken(type);
+
+  // 3. 手持ちカードのキューブを置けるだけ置く
+  cpuPlaceCubes();
+
+  // 4. 動物カードを1枚取り、置けるならキューブも
+  cpuTakeCard();
+  cpuPlaceCubes();
+
+  renderAll();
+}
+
+function cpuPlaceToken(type) {
+  const cands = Object.values(G.cells).filter(c => canPlace(type, c.stack));
+  if (!cands.length) return false;         // 置けない → 破棄
+  const base = computeTerrainScore().total;
+  let bestCell = null, bestScore = -Infinity;
+  for (const c of cands) {
+    c.stack.push(type);
+    const delta = computeTerrainScore().total - base;
+    c.stack.pop();
+    const score = delta + Math.random() * 0.4; // 同点はランダムに散らす
+    if (score > bestScore) { bestScore = score; bestCell = c; }
+  }
+  bestCell.stack.push(type);
+  return true;
+}
+
+function cpuPlaceCubes() {
+  for (const card of P().owned) {
+    let guard = 0;
+    while ((card.placed || 0) < card.slots.length && guard++ < 12) {
+      const anchors = validAnchors(card);
+      if (!anchors.length) break;
+      const cell = G.cells[anchors[0]];
+      cell.cube = card.id;
+      card.placed = (card.placed || 0) + 1;
+    }
+  }
+}
+
+function cpuTakeCard() {
+  if (G.tookCardThisTurn || P().owned.length >= 4 || !G.market.length) return;
+  // 今すぐ置けるカードを優先。無ければトップ得点が高いカード。
+  let pick = -1, bestVal = -1;
+  for (let i = 0; i < G.market.length; i++) {
+    const card = G.market[i];
+    const placeable = validAnchors(card).length > 0;
+    const val = (placeable ? 100 : 0) + card.slots[0];
+    if (val > bestVal) { bestVal = val; pick = i; }
+  }
+  if (pick < 0) return;
+  const card = G.market.splice(pick, 1)[0];
+  P().owned.push(card);
+  G.tookCardThisTurn = true;
+  refillMarket();
 }
 
 // 精霊カードを選ぶ（idまたは'none'）。ソロの最初の手番開始時のみ。
@@ -612,7 +714,8 @@ function renderAll() {
   renderSpirit();
   renderAnimals();
   renderScore();
-  document.getElementById('btn-endturn').disabled = G.over;
+  // CPU手番中・CPUの番・終了時は「ターン終了」を無効化
+  document.getElementById('btn-endturn').disabled = G.over || G.cpuThinking || (P() && P().isCpu);
 }
 
 // 個人ボード／中央ボードの見出しに現在プレイヤーとモードを表示
@@ -914,8 +1017,9 @@ function showResult() {
           '</td><td>' + r.s.animal + '</td><td><b>' + r.s.total + '</b></td></tr>';
       }).join('') + '</table>';
   }
-  openModal('<h2>ゲーム終了！</h2>' + body + '<button id="modal-new">もう一度（同じ人数）</button>');
-  document.getElementById('modal-new').addEventListener('click', () => { closeModal(); newGame(G.mode); });
+  openModal('<h2>ゲーム終了！</h2>' + body + '<button id="modal-new">もう一度（同じ設定）</button>');
+  const mode = G.mode, cpu = G.cpuCount || 0;
+  document.getElementById('modal-new').addEventListener('click', () => { closeModal(); newGame(mode, cpu); });
 }
 // 同点処理用：そのプレイヤーが盤に置いたキューブ数
 function cubeCount(row) {
@@ -952,11 +1056,11 @@ function showRules() {
   );
 }
 
-// 人数選択モーダル
+// 人数選択モーダル（Step1：合計人数 → Step2：CPU人数）
 function showModePicker() {
   openModal(
-    '<h2>新規ゲーム：人数を選択</h2>' +
-    '<p style="color:var(--muted)">2〜4人は同じ画面を回して交代で遊ぶ方式です。</p>' +
+    '<h2>新規ゲーム：合計人数を選択</h2>' +
+    '<p style="color:var(--muted)">2〜4人は同じ画面を回して交代（＋CPUと対戦）できます。</p>' +
     '<div class="mode-picker">' +
     '<button data-mode="1">1人（ソロ）</button>' +
     '<button data-mode="2">2人</button>' +
@@ -965,7 +1069,30 @@ function showModePicker() {
     '</div>'
   );
   document.querySelectorAll('.mode-picker button').forEach(b =>
-    b.addEventListener('click', () => { closeModal(); newGame(parseInt(b.getAttribute('data-mode'), 10)); }));
+    b.addEventListener('click', () => {
+      const mode = parseInt(b.getAttribute('data-mode'), 10);
+      if (mode === 1) { closeModal(); newGame(1, 0); }
+      else showCpuPicker(mode);
+    }));
+}
+
+// CPU人数の選択（0〜mode-1。人間は最低1人）
+function showCpuPicker(mode) {
+  let btns = '';
+  for (let cpu = 0; cpu <= mode - 1; cpu++) {
+    const human = mode - cpu;
+    const label = cpu === 0 ? '全員プレイヤー' : ('CPU ' + cpu + '人（人間' + human + '人）');
+    btns += '<button data-cpu="' + cpu + '">' + label + '</button>';
+  }
+  openModal(
+    '<h2>' + mode + '人プレイ：CPUの人数は？</h2>' +
+    '<p style="color:var(--muted)">CPUの手番は自動で進みます。1人で複数人プレイを楽しめます。</p>' +
+    '<div class="mode-picker vert">' + btns + '</div>' +
+    '<p style="margin-top:10px"><button class="ghost small" id="cpu-back">← 人数選択に戻る</button></p>'
+  );
+  document.querySelectorAll('.mode-picker button').forEach(b =>
+    b.addEventListener('click', () => { closeModal(); newGame(mode, parseInt(b.getAttribute('data-cpu'), 10)); }));
+  document.getElementById('cpu-back').addEventListener('click', showModePicker);
 }
 
 // =========================================================================
@@ -976,7 +1103,7 @@ function save() {
   try {
     const copy = JSON.parse(JSON.stringify(G));
     // 別名参照/一時的なUI状態は保存しない（players[] が正）
-    delete copy.cells;
+    delete copy.cells; delete copy.cpuThinking;
     delete copy.selectedHand; delete copy.placingCard; delete copy.cubeAnchors;
     localStorage.setItem(SAVE_KEY, JSON.stringify(copy));
   } catch (e) { /* localStorage不可でも続行 */ }
@@ -1004,9 +1131,11 @@ document.getElementById('modal').addEventListener('click', (e) => {
 });
 
 if (load() && G && G.cells) {
+  G.cpuThinking = false;
   renderAll();
   setHint(G.over ? 'ゲーム終了。新規ゲームで再開できます'
     : (isSolo() ? '再開しました。手番を続けよう' : P().name + 'の手番：続けよう'));
+  scheduleCpuIfNeeded();   // 中断がCPUの番だった場合は自動再開
 } else {
   showModePicker();
 }
