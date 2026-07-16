@@ -479,11 +479,28 @@ function selectView(i) {
   else if (interactive()) setHint('あなたの手番：中央スペースからトークンを取得しよう');
 }
 
+// 各トークンの配置ルール説明（置けない理由の案内に使う）
+const PLACE_RULE = {
+  river: '川は空きマスに平置きします',
+  field: '畑は空きマスに平置きします',
+  mountain: '山は空きマス、または山の上（最大3段）に置けます',
+  tree: '木(茶)は空きマス、または木の上（最大2段）に置けます',
+  leaf: '葉(緑)は空きマス、または木の上に置けます',
+  building: '建物は山・木・建物（高さ1）の上にしか置けません（空きマス不可）',
+};
+
 function selectHand(idx) {
   if (!interactive()) return;
   if (G.handUsed[idx]) return;
   G.selectedHand = (G.selectedHand === idx) ? null : idx;
   renderAll();
+  if (G.selectedHand != null) {
+    const type = G.hand[G.selectedHand];
+    const has = Object.values(G.cells).some(c => canPlaceOn(c, type));
+    setHint(has
+      ? '緑のマスに「' + TOKENS[type].label + '」を置こう'
+      : '「' + TOKENS[type].label + '」は今この盤に置ける場所がありません。' + PLACE_RULE[type]);
+  }
 }
 
 function clickCell(key) {
@@ -1102,7 +1119,7 @@ function showRules() {
     '<ul>' +
     '<li><b>人数</b>：1人（ソロ＝精霊＋勝利点あり）／2〜4人（同じ画面を回して交代。素点で勝敗）。</li>' +
     '<li><b>手番</b>：中央ボードのスペースを1つ選び、トークン3個を取得 → 自分の盤に配置。</li>' +
-    '<li><b>配置ルール</b>：川/畑=平置き。山=最大3段。木(幹)=最大2段。葉=地面か幹の上。建物=山/建物/木(高さ1)の上（高さ2まで）。</li>' +
+    '<li><b>配置ルール</b>：川/畑=空きマスに平置き。山=最大3段。木(幹)=最大2段。葉=空きマスか幹の上。<b>建物=山・木・建物(高さ1)の上のみ（空きマス不可）</b>。</li>' +
     '<li><b>動物カード</b>：手番に1枚まで取得（最大4枚保持）。条件パターンが盤上にできたら「キューブを置く」。全キューブ配置で完成。場は 1人=3枚／2〜4人=5枚。</li>' +
     '<li><b>精霊カード（ソロのみ）</b>：最初の手番の前に2枚から1枚選ぶ（または「精霊なし」）。ソロ勝利点は「なし=+2／グループ=+1／個別=+0」。</li>' +
     '<li><b>ターン終了</b>：中央スペースを補充（ソロは残りを破棄）。マルチは次の人へ。</li>' +
